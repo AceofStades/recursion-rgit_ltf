@@ -13,7 +13,7 @@ os.makedirs("output", exist_ok=True)
 
 # Load Whisper model
 try:
-    stt_model = whisper.load_model("base")  # You can use "small", "medium", or "large" for better accuracy
+    stt_model = whisper.load_model("base")
 except Exception as e:
     stt_model = None
     print(f"Warning: Whisper model could not be loaded. Auto-captioning will be disabled. Error: {e}")
@@ -107,17 +107,48 @@ def generate_captions(video_path):
         return "Error generating captions", None
 
 def overlay_captions(video_path, captions, output_path):
-    """Overlays captions on the video."""
+    """Overlays captions on the video with uniform size, text wrapping, and semi-transparent background."""
     try:
         clip = mp.VideoFileClip(video_path)
+        original_width, original_height = clip.size
 
-        # Create subtitles with timing
-        subtitles = SubtitlesClip(captions, lambda txt: mp.TextClip(
-            txt, font='Cantarell', fontsize=24, color='white', bg_color='black'
-        ))
+        is_portrait = original_height > original_width
+
+        base_font_size = 24  # Base font size for landscape mode
+        if is_portrait:
+            # Increase font size for portrait mode
+            font_size = int(base_font_size * 1.5)  # Adjust multiplier as needed
+        else:
+            font_size = base_font_size
+
+        # Define subtitle width (80% of video width to allow for margins)
+        subtitle_width = int(original_width * 0.8)
+
+        # Function to create a TextClip with uniform size and text wrapping
+        def create_subtitle_text_clip(txt):
+            return mp.TextClip(
+                txt,
+                font='Cantarell',
+                fontsize=font_size,
+                color='white',
+                bg_color='black',
+                size=(subtitle_width, None),  # Fixed width, auto height for wrapping
+                method='caption',  # Enables text wrapping
+                align='center'  # Center-align text within the subtitle box
+            ).on_color(
+                color=(0, 0, 0, int(255 * 0.7)),  # 70% opaque black background
+                col_opacity=0.7
+            )
+
+        # Create subtitles with uniform size and text wrapping
+        subtitles = SubtitlesClip(captions, create_subtitle_text_clip)
+
+        # Calculate subtitle position to hover slightly above the bottom
+        subtitle_margin = 50  # Distance from the bottom of the screen
+        subtitle_position = ('center', original_height - subtitle_margin)
 
         # Composite video with subtitles
-        final_clip = mp.CompositeVideoClip([clip, subtitles.set_position(('center', 'bottom'))])
+        final_clip = mp.CompositeVideoClip([clip, subtitles.set_position(subtitle_position)])
 
         # Write the final video
         final_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
