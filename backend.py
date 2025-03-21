@@ -1,70 +1,161 @@
-from flask import Flask, request, jsonify, send_file
 from flask import Flask, request, jsonify
-from text_processing import extract_requirements
-
-app = Flask(__name__)
-
-@app.route("/process", methods=["POST"])
-def process_request():
-    data = request.json
-    user_text = data.get("text", "")
-
-    aspect_ratio, format = extract_requirements(user_text)
-
-    if not aspect_ratio or not format:
-        return jsonify({"reply": "I couldn't understand your request. Please specify a valid format and aspect ratio."})
-
-    return jsonify({"reply": f"Processing video as {aspect_ratio} {format}. Need any other changes?"})
-
-if __name__ == "__main__":
-    app.run(debug=True)
 import os
-from video_processing import process_video
+import cv2
+import moviepy.editor as mp
+from transformers import pipeline
+import uuid
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+# Create output directory if it doesn't exist
+os.makedirs("output", exist_ok=True)
 
-@app.route("/upload", methods=["POST"])
-def upload_video():
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+# Initialize speech recognition model
+try:
+    stt_pipeline = pipeline("automatic-speech-recognition", model="openai/whisper-small")
+except:
+    stt_pipeline = None
+    print("Warning: Speech recognition model could not be loaded. Auto-captioning will be disabled.")
 
-    file = request.files["file"]
-    filename = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(filename)
+# Resolution mappings
+RESOLUTION_MAP = {
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+    "4k": (3840, 2160)
+}
 
-    return jsonify({"message": "Upload successful", "file_path": filename})
+# Platform aspect ratio settings
+ASPECT_RATIOS = {
+    "16:9": (16, 9),
+    "9:16": (9, 16),
+    "4:5": (4, 5)
+}
 
-@app.route("/process", methods=["POST"])
-def process():
+@app.route("/get_resolution", methods=["POST"])
+def get_resolution():
     data = request.json
-    input_path = data.get("file_path")
-    platform = data.get("platform")
-    video_type = data.get("video_type")
-    format = data.get("format", "mp4")
-    resolution = data.get("resolution", "1080p")
-    aspect_ratio = data.get("aspect_ratio", None)
-    auto_caption = data.get("auto_caption", False)
+    video_path = data["file_path"]
 
-    if not input_path or not platform:
-        return jsonify({"error": "Missing required parameters"}), 400
+    try:
+        cap = cv2.VideoCapture(video_path)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
 
-    output_path = os.path.join(PROCESSED_FOLDER, f"processed_{os.path.basename(input_path)}")
-    process_video(input_path, output_path, platform, video_type, format, resolution, aspect_ratio, auto_caption)
+        if width >= 3840 and height >= 2160:
+            resolution = "4K"
+        elif width >= 1920 and height >= 1080:
+            resolution = "1080p"
+        else:
+            resolution = "720p"
 
-    return jsonify({"message": "Processing complete", "output_path": output_path})
+        return jsonify({"resolution": resolution})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route("/download", methods=["GET"])
-def download():
-    file_path = request.args.get("file")
-    if not os.path.exists(file_path):
-        return jsonify({"error": "File not found"}), 404
+def resize_video(video_path, output_path, aspect_ratio, resolution):
+    """Resize video to the target aspect ratio and resolution"""
+    try:
+        # Parse resolution
+        if resolution in RESOLUTION_MAP:
+            target_width, target_height = RESOLUTION_MAP[resolution]
+        else:
+            target_width, target_height = RESOLUTION_MAP["1080p"]  # Default to 1080p
 
-    return send_file(file_path, as_attachment=True)
+        # Parse aspect ratio
+        if aspect_ratio in ASPECT_RATIOS:
+            ratio_w, ratio_h = ASPECT_RATIOS[aspect_ratio]
+        else:
+            ratio_w, ratio_h = ASPECT_RATIOS["16:9"]  # Default to 16:9
+
+        # Adjust dimensions to match aspect ratio
+        if ratio_w / ratio_h > 1:  # Wider than tall
+            new_height = target_height
+            new_width = int(new_height * ratio_w / ratio_h)
+            if new_width > target_width:
+                new_width = target_width
+                new_height = int(new_width * ratio_h / ratio_w)
+        else:  # Taller than wide
+            new_width = target_width
+            new_height = int(new_width * ratio_h / ratio_w)
+            if new_height > target_height:
+                new_height = target_height
+                new_width = int(new_height * ratio_w / ratio_h)
+
+        # Create video clip and resize
+        clip = mp.VideoFileClip(video_path)
+        resized_clip = clip.resize(newsize=(new_width, new_height))
+        resized_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
+
+        return output_path
+    except Exception as e:
+        print(f"Error resizing video: {e}")
+        return None
+
+def extract_audio(video_path, audio_path="temp_audio.wav"):
+    """Extract audio from video file"""
+    try:
+        clip = mp.VideoFileClip(video_path)
+        clip.audio.write_audiofile(audio_path)
+        return audio_path
+    except Exception as e:
+        print(f"Error extracting audio: {e}")
+        return None
+
+def generate_captions(video_path):
+    """Generate captions using speech recognition"""
+    if stt_pipeline is None:
+        return "Captions not available. Speech recognition model not loaded."
+
+    try:
+        audio_path = extract_audio(video_path)
+        if audio_path:
+            result = stt_pipeline(audio_path)
+            os.remove(audio_path)  # Clean up temp file
+            return result["text"]
+        return "No audio detected"
+    except Exception as e:
+        print(f"Error generating captions: {e}")
+        return "Error generating captions"
+
+@app.route("/process_video", methods=["POST"])
+def process_video():
+    data = request.json
+
+    try:
+        video_path = data["file_path"]
+        platform = data["platform"]
+        video_type = data["video_type"]
+        format_type = data["format"]
+        resolution = data["resolution"]
+        aspect_ratio = data["aspect_ratio"]
+        auto_caption = data["auto_caption"]
+
+        # Generate unique output filename
+        output_filename = f"output_{uuid.uuid4().hex}.{format_type}"
+        output_path = os.path.join("output", output_filename)
+
+        # Process video
+        if resize_video(video_path, output_path, aspect_ratio, resolution):
+            result = {"output_path": output_path}
+
+            # Generate captions if requested
+            if auto_caption:
+                captions = generate_captions(video_path)
+                result["captions"] = captions
+
+                # Create SRT file
+                srt_path = output_path.replace(f".{format_type}", ".srt")
+                with open(srt_path, "w") as f:
+                    f.write("1\n00:00:00,000 --> 00:00:30,000\n" + captions)
+
+                result["captions_path"] = srt_path
+
+            return jsonify(result)
+        else:
+            return jsonify({"error": "Failed to process video"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
