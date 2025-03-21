@@ -7,7 +7,7 @@ import uuid
 import re
 import whisper
 
-app = Flask(__name__)
+app = Flask(_name_)
 
 os.makedirs("output", exist_ok=True)
 
@@ -114,12 +114,16 @@ def overlay_captions(video_path, captions, output_path):
 
         is_portrait = original_height > original_width
 
-        base_font_size = 24  # Base font size for landscape mode
+        base_font_size = 30  # Base font size for landscape mode
         if is_portrait:
             # Increase font size for portrait mode
-            font_size = int(base_font_size * 1.5)  # Adjust multiplier as needed
+            font_size = int(base_font_size * 2)  # Adjust multiplier as needed
+            subtitle_margin = 300  # Distance from the bottom of the screen
+
         else:
             font_size = base_font_size
+            subtitle_margin = 50  # Distance from the bottom of the screen
+
 
         # Define subtitle width (80% of video width to allow for margins)
         subtitle_width = int(original_width * 0.8)
@@ -144,7 +148,6 @@ def overlay_captions(video_path, captions, output_path):
         subtitles = SubtitlesClip(captions, create_subtitle_text_clip)
 
         # Calculate subtitle position to hover slightly above the bottom
-        subtitle_margin = 50  # Distance from the bottom of the screen
         subtitle_position = ('center', original_height - subtitle_margin)
 
         # Composite video with subtitles
@@ -207,5 +210,5 @@ def process_video():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     app.run(debug=True)
