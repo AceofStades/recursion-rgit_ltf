@@ -11,6 +11,19 @@ os.makedirs("uploads", exist_ok=True)
 
 st.title("AI Video Resizer & Format Converter")
 
+# Check available features from backend
+try:
+    features_response = requests.get(f"{BACKEND_URL}/available_features")
+    features = features_response.json() if features_response.status_code == 200 else {
+        "face_tracking_available": False,
+        "auto_caption_available": False
+    }
+except:
+    features = {
+        "face_tracking_available": False,
+        "auto_caption_available": False
+    }
+
 # Upload video
 uploaded_file = st.file_uploader("Upload a video", type=["mp4", "mkv", "avi"])
 
@@ -51,7 +64,17 @@ if uploaded_file:
         aspect_ratio = f"{custom_ratio_w}:{custom_ratio_h}"
 
     format = st.selectbox("Select Format", ["mp4", "mkv", "avi"])
-    auto_caption = st.checkbox("Enable Auto Captions")
+
+    # Add face tracking option if available
+    use_face_tracking = False
+    if features["face_tracking_available"]:
+        use_face_tracking = st.checkbox("Enable Smart Face Tracking", value=True,
+                                        help="Intelligently crop video to follow faces (recommended for portrait videos)")
+
+    # Show auto captioning option if available
+    auto_caption = False
+    if features["auto_caption_available"]:
+        auto_caption = st.checkbox("Enable Auto Captions")
 
     # Get video resolution from backend
     if "video_resolution" not in st.session_state or "original_dimensions" not in st.session_state:
@@ -108,7 +131,8 @@ if uploaded_file:
 
     # Display resolution preview
     st.info(f"New Resolution: {new_width}x{new_height} ({resolution_percentage}%)")
-    st.markdown(f"### Key Points: {', '.join(markers)}")
+    if markers:
+        st.markdown(f"### Key Points: {', '.join(markers)}")
 
     # Process button
     if st.button("Process Video"):
@@ -119,9 +143,10 @@ if uploaded_file:
                     "platform": platform.lower(),
                     "video_type": video_type.lower() if not custom_mode else "custom",
                     "format": format.lower(),
-                    "resolution": f"{new_width}x{new_height}",
+                    "resolution": f"{resolution_percentage}%",  # Send percentage instead of exact dimensions
                     "aspect_ratio": aspect_ratio.lower(),
                     "auto_caption": auto_caption,
+                    "use_face_tracking": use_face_tracking,
                     "custom_mode": custom_mode
                 }
 

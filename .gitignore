@@ -314,3 +314,5 @@ dist
 output/
 uploads/
 output**
+
+yolov8n.pt
