@@ -2,21 +2,21 @@ from flask import Flask, request, jsonify
 import os
 import cv2
 import moviepy.editor as mp
-from transformers import pipeline
+from moviepy.video.tools.subtitles import SubtitlesClip
 import uuid
 import re
+import whisper
 
 app = Flask(__name__)
 
-# Create output directory if it doesn't exist
 os.makedirs("output", exist_ok=True)
 
-# Initialize speech recognition model
+# Load Whisper model
 try:
-    stt_pipeline = pipeline("automatic-speech-recognition", model="openai/whisper-small")
-except:
-    stt_pipeline = None
-    print("Warning: Speech recognition model could not be loaded. Auto-captioning will be disabled.")
+    stt_model = whisper.load_model("base")  # You can use "small", "medium", or "large" for better accuracy
+except Exception as e:
+    stt_model = None
+    print(f"Warning: Whisper model could not be loaded. Auto-captioning will be disabled. Error: {e}")
 
 @app.route("/get_resolution", methods=["POST"])
 def get_resolution():
@@ -61,7 +61,7 @@ def resize_video(video_path, output_path, aspect_ratio_str, resolution_percentag
 
         # Resize video
         resized_clip = clip.resize(newsize=(new_width, new_height))
-        resized_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
+        resized_clip.write_videofile(output_path, codec="hevc", audio_codec="aac")
 
         return output_path
     except Exception as e:
@@ -81,27 +81,51 @@ def extract_audio(video_path, audio_path="temp_audio.wav"):
         return None
 
 def generate_captions(video_path):
-    """Generates captions using a speech-to-text model and creates an SRT file."""
-    if stt_pipeline is None:
-        return "Captions not available. Speech recognition model not loaded."
+    """Generates captions using the Whisper STT model."""
+    if stt_model is None:
+        return "Captions not available. Whisper model not loaded."
 
     try:
         audio_path = extract_audio(video_path)
         if audio_path:
-            result = stt_pipeline(audio_path)
-            os.remove(audio_path)  # Clean up temp file
-            captions = result["text"]
+            # Transcribe audio using Whisper
+            result = stt_model.transcribe(audio_path)
+            os.remove(audio_path)
 
-            # Create an SRT file with basic timing (assuming 30s per sentence)
-            srt_path = video_path.replace(".mp4", ".srt").replace(".mkv", ".srt")
-            with open(srt_path, "w") as f:
-                f.write("1\n00:00:00,000 --> 00:00:30,000\n" + captions)
+            # Extract segments with timing information
+            captions = []
+            for segment in result["segments"]:
+                start_time = segment["start"]
+                end_time = segment["end"]
+                text = segment["text"]
+                captions.append(((start_time, end_time), text))
 
-            return captions, srt_path
+            return captions
         return "No audio detected", None
     except Exception as e:
         print(f"Error generating captions: {e}")
         return "Error generating captions", None
+
+def overlay_captions(video_path, captions, output_path):
+    """Overlays captions on the video."""
+    try:
+        clip = mp.VideoFileClip(video_path)
+
+        # Create subtitles with timing
+        subtitles = SubtitlesClip(captions, lambda txt: mp.TextClip(
+            txt, font='Cantarell', fontsize=24, color='white', bg_color='black'
+        ))
+
+        # Composite video with subtitles
+        final_clip = mp.CompositeVideoClip([clip, subtitles.set_position(('center', 'bottom'))])
+
+        # Write the final video
+        final_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
+
+        return output_path
+    except Exception as e:
+        print(f"Error overlaying captions: {e}")
+        return None
 
 @app.route("/process_video", methods=["POST"])
 def process_video():
@@ -139,10 +163,12 @@ def process_video():
 
             # Generate captions if requested
             if auto_caption:
-                captions, srt_path = generate_captions(video_path)
-                result["captions"] = captions
-                if srt_path:
-                    result["captions_path"] = srt_path
+                captions = generate_captions(video_path)
+                if captions:
+                    # Overlay captions on the video
+                    captioned_video_path = processed_path.replace(f".{format_type}", f"_captioned.{format_type}")
+                    overlay_captions(processed_path, captions, captioned_video_path)
+                    result["output_path"] = captioned_video_path
 
             return jsonify(result)
         else:
