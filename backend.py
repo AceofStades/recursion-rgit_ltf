@@ -7,7 +7,7 @@ import uuid
 import re
 import whisper
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 os.makedirs("output", exist_ok=True)
 
@@ -210,5 +210,5 @@ def process_video():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     app.run(debug=True)
