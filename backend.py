@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 import os
 import cv2
@@ -105,7 +104,7 @@ def resize_video(video_path, output_path, aspect_ratio_str, resolution_percentag
         original_width, original_height = clip.size
 
         # Calculate new resolution
-        scale_factor = resolution_percentage / 100  # Convert to scale
+        scale_factor = resolution_percentage / 100
         new_width = int(original_width * scale_factor)
         new_height = int(original_height * scale_factor)
 
@@ -127,8 +126,8 @@ def resize_video(video_path, output_path, aspect_ratio_str, resolution_percentag
         print(f"Error resizing video: {e}")
         return None
 
-def crop_video_to_face(video_path, output_path, aspect_ratio_str):
-    """Crops the video to track faces while maintaining the specified aspect ratio."""
+def crop_video_to_face(video_path, output_path, aspect_ratio_str, target_width, target_height):
+    """Crops the video to track faces and resizes to target dimensions."""
     if yolo_model is None:
         print("YOLO model not loaded. Face tracking is disabled.")
         return None
@@ -139,8 +138,7 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
             print(f"Invalid aspect ratio: {aspect_ratio_str}. Using default 16:9")
             aspect_ratio = (16, 9)
 
-        target_width_ratio, target_height_ratio = aspect_ratio
-        target_ratio = target_width_ratio / target_height_ratio
+        target_ratio = aspect_ratio[0] / aspect_ratio[1]
 
         # Open video
         cap = cv2.VideoCapture(video_path)
@@ -166,11 +164,10 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
             face_detected = False
             for result in results:
                 for box in result.boxes:
-                    # Only consider boxes that are likely to be faces (class 0)
                     if hasattr(box, 'cls') and len(box.cls) > 0 and int(box.cls[0]) == 0:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])  # Face bounding box
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
                         face_detected = True
-                        break  # Process only the first detected face
+                        break
                 if face_detected:
                     break
 
@@ -181,7 +178,7 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
                 center_x = (x1 + x2) // 2
                 center_y = (y1 + y2) // 2
 
-                # Adjust crop size to maintain the target aspect ratio
+                # Adjust crop size to maintain target aspect ratio
                 if target_ratio > (face_width / face_height):
                     new_width = int(face_height * target_ratio)
                     new_height = face_height
@@ -189,7 +186,7 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
                     new_width = face_width
                     new_height = int(face_width / target_ratio)
 
-                # Ensure cropping does not go out of bounds
+                # Ensure cropping doesn't exceed frame boundaries
                 x1_new = max(0, center_x - new_width // 2)
                 x2_new = min(frame_width, center_x + new_width // 2)
                 y1_new = max(0, center_y - new_height // 2)
@@ -198,46 +195,26 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
                 # Crop frame
                 cropped_frame = frame[y1_new:y2_new, x1_new:x2_new]
 
-                # Ensure the cropped frame matches the target aspect ratio
-                cropped_height, cropped_width = cropped_frame.shape[:2]
-                current_ratio = cropped_width / cropped_height
-
-                if abs(current_ratio - target_ratio) > 0.01:  # If not close enough to target ratio
-                    if current_ratio > target_ratio:
-                        # Too wide, adjust width
-                        new_width = int(cropped_height * target_ratio)
-                        start = (cropped_width - new_width) // 2
-                        cropped_frame = cropped_frame[:, start:start+new_width]
-                    else:
-                        # Too tall, adjust height
-                        new_height = int(cropped_width / target_ratio)
-                        start = (cropped_height - new_height) // 2
-                        cropped_frame = cropped_frame[start:start+new_height, :]
-
-                # Convert BGR to RGB for MoviePy
+                # Resize to target dimensions
+                cropped_frame = cv2.resize(cropped_frame, (target_width, target_height))
                 cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-
-                # Store frame
                 cropped_frames.append(cropped_frame)
             else:
-                # If no face detected, use the center of the frame
+                # Center crop when no face detected
                 current_ratio = frame_width / frame_height
 
                 if current_ratio > target_ratio:
-                    # Video is wider than target, crop width
                     new_width = int(frame_height * target_ratio)
                     start = (frame_width - new_width) // 2
                     cropped_frame = frame[:, start:start+new_width]
                 else:
-                    # Video is taller than target, crop height
                     new_height = int(frame_width / target_ratio)
                     start = (frame_height - new_height) // 2
                     cropped_frame = frame[start:start+new_height, :]
 
-                # Convert BGR to RGB for MoviePy
+                # Resize to target dimensions
+                cropped_frame = cv2.resize(cropped_frame, (target_width, target_height))
                 cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-
-                # Store frame
                 cropped_frames.append(cropped_frame)
 
         cap.release()
@@ -246,18 +223,16 @@ def crop_video_to_face(video_path, output_path, aspect_ratio_str):
             # Create video clip from cropped frames
             cropped_video = ImageSequenceClip(cropped_frames, fps=fps)
 
-            # Extract audio from original video
+            # Add audio from original video
             orig_clip = VideoFileClip(video_path)
             if orig_clip.audio:
                 cropped_video = cropped_video.set_audio(orig_clip.audio)
 
-            # Write the final cropped video
+            # Write output
             cropped_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
-
-            print(f"Face-tracked video saved as: {output_path}")
             return output_path
         else:
-            print("No frames were processed!")
+            print("No frames processed!")
             return None
     except Exception as e:
         print(f"Error in face tracking: {e}")
@@ -283,11 +258,9 @@ def generate_captions(video_path):
     try:
         audio_path = extract_audio(video_path)
         if audio_path:
-            # Transcribe audio using Whisper
             result = stt_model.transcribe(audio_path)
             os.remove(audio_path)
 
-            # Extract segments with timing information
             captions = []
             for segment in result["segments"]:
                 start_time = segment["start"]
@@ -302,51 +275,35 @@ def generate_captions(video_path):
         return "Error generating captions", None
 
 def overlay_captions(video_path, captions, output_path):
-    """Overlays captions on the video with uniform size, text wrapping, and semi-transparent background."""
+    """Overlays captions on the video."""
     try:
         clip = mp.VideoFileClip(video_path)
         original_width, original_height = clip.size
 
         is_portrait = original_height > original_width
-
-        base_font_size = 30  # Base font size for landscape mode
-        if is_portrait:
-            # Increase font size for portrait mode
-            font_size = int(base_font_size * 2)  # Adjust multiplier as needed
-            subtitle_margin = 300  # Distance from the bottom of the screen
-        else:
-            font_size = base_font_size
-            subtitle_margin = 50  # Distance from the bottom of the screen
-
-        # Define subtitle width (80% of video width to allow for margins)
+        base_font_size = 30
+        subtitle_margin = 300 if is_portrait else 50
         subtitle_width = int(original_width * 0.8)
 
-        # Function to create a TextClip with uniform size and text wrapping
         def create_subtitle_text_clip(txt):
             return mp.TextClip(
                 txt,
                 font='Cantarell',
-                fontsize=font_size,
+                fontsize=base_font_size * (2 if is_portrait else 1),
                 color='white',
                 bg_color='black',
-                size=(subtitle_width, None),  # Fixed width, auto height for wrapping
-                method='caption',  # Enables text wrapping
-                align='center'  # Center-align text within the subtitle box
+                size=(subtitle_width, None),
+                method='caption',
+                align='center'
             ).on_color(
-                color=(0, 0, 0, int(255 * 0.7)),  # 70% opaque black background
+                color=(0, 0, 0, int(255 * 0.7)),
                 col_opacity=0.7
             )
 
-        # Create subtitles with uniform size and text wrapping
         subtitles = SubtitlesClip(captions, create_subtitle_text_clip)
-
-        # Calculate subtitle position to hover slightly above the bottom
         subtitle_position = ('center', original_height - subtitle_margin)
 
-        # Composite video with subtitles
         final_clip = mp.CompositeVideoClip([clip, subtitles.set_position(subtitle_position)])
-
-        # Write the final video
         final_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
 
         return output_path
@@ -356,58 +313,73 @@ def overlay_captions(video_path, captions, output_path):
 
 @app.route("/process_video", methods=["POST"])
 def process_video():
-    """Processes video based on user selection and returns the output file."""
+    """Processes video based on user selection."""
     data = request.json
-    print("Received request data:", data)  # Add debugging
-
     try:
         video_path = data.get("file_path")
         format_type = data.get("format", "mp4")
-        aspect_ratio = data.get("aspect_ratio", "16:9")
+        aspect_ratio_str = data.get("aspect_ratio", "16:9")
         auto_caption = data.get("auto_caption", False)
         resolution_str = data.get("resolution", "100%")
         use_face_tracking = data.get("use_face_tracking", False)
 
-        # Log the processing parameters
-        print(f"Processing video with: format={format_type}, aspect_ratio={aspect_ratio}, "
-              f"resolution={resolution_str}, use_face_tracking={use_face_tracking}")
+        # Get original dimensions
+        cap = cv2.VideoCapture(video_path)
+        original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
 
-        # Generate unique output filename
+        # Calculate resolution percentage
+        resolution_percentage = float(resolution_str.replace("%", "")) / 100.0
+
+        # Parse aspect ratio and calculate target dimensions
+        aspect_ratio = parse_aspect_ratio(aspect_ratio_str)
+        if aspect_ratio:
+            ratio_w, ratio_h = aspect_ratio
+            target_ratio = ratio_w / ratio_h
+            new_width = int(original_width * resolution_percentage)
+            new_height = int(new_width * ratio_h / ratio_w)
+        else:
+            new_width = int(original_width * resolution_percentage)
+            new_height = int(original_height * resolution_percentage)
+
+        target_width = new_width
+        target_height = new_height
+
+        # Generate output path
         output_filename = f"output_{uuid.uuid4().hex}.{format_type}"
         output_path = os.path.join(app.config["OUTPUT_FOLDER"], output_filename)
 
         processed_path = None
 
-        # Determine if we're using percentage or fixed resolution
-        if "%" in resolution_str:
-            resolution_percentage = float(resolution_str.replace("%", ""))
-        else:
-            # Fixed resolution mode, but for simplicity we'll just use 100% and rely on the aspect ratio
-            resolution_percentage = 100
-
-        # Process the video based on user selection
         if use_face_tracking and yolo_model is not None:
-            print("Using face tracking for processing")
-            # Use face tracking for aspect ratio cropping
-            processed_path = crop_video_to_face(video_path, output_path, aspect_ratio)
+            processed_path = crop_video_to_face(
+                video_path,
+                output_path,
+                aspect_ratio_str,
+                target_width,
+                target_height
+            )
         else:
-            print("Using standard resize method")
-            # Use traditional resize method
-            processed_path = resize_video(video_path, output_path, aspect_ratio, resolution_percentage)
+            processed_path = resize_video(
+                video_path,
+                output_path,
+                aspect_ratio_str,
+                resolution_percentage * 100
+            )
 
         if not processed_path:
             return jsonify({"error": "Failed to process video"}), 500
 
         result = {"output_path": processed_path}
 
-        # Generate captions if requested
+        # Handle captions
         if auto_caption:
             captions = generate_captions(video_path)
-            if captions and captions != "No audio detected" and captions != "Error generating captions":
-                # Overlay captions on the video
-                captioned_video_path = processed_path.replace(f".{format_type}", f"_captioned.{format_type}")
-                overlay_captions(processed_path, captions, captioned_video_path)
-                result["output_path"] = captioned_video_path
+            if captions and isinstance(captions, list):
+                captioned_path = processed_path.replace(f".{format_type}", f"_captioned.{format_type}")
+                overlay_captions(processed_path, captions, captioned_path)
+                result["output_path"] = captioned_path
 
         return jsonify(result)
     except Exception as e:
@@ -415,7 +387,7 @@ def process_video():
 
 @app.route("/available_features", methods=["GET"])
 def available_features():
-    """Returns information about which features are available based on loaded models."""
+    """Returns available features status."""
     return jsonify({
         "face_tracking_available": yolo_model is not None,
         "auto_caption_available": stt_model is not None
