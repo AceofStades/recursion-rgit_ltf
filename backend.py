@@ -274,30 +274,29 @@ def generate_captions(video_path):
         print(f"Error generating captions: {e}")
         return "Error generating captions", None
 
-def overlay_captions(video_path, captions, output_path):
-    """Overlays captions on the video."""
+def overlay_captions(video_path, captions, output_path, font="Cantarell", fontsize=30, color="#FFFFFF", bg_color="#000000", bg_opacity=0.7):
+    """Overlays captions on the video with customizable options."""
     try:
         clip = mp.VideoFileClip(video_path)
         original_width, original_height = clip.size
 
         is_portrait = original_height > original_width
-        base_font_size = 30
         subtitle_margin = 300 if is_portrait else 50
         subtitle_width = int(original_width * 0.8)
 
         def create_subtitle_text_clip(txt):
             return mp.TextClip(
                 txt,
-                font='Cantarell',
-                fontsize=base_font_size * (2 if is_portrait else 1),
-                color='white',
-                bg_color='black',
+                font=font,
+                fontsize=fontsize * (2 if is_portrait else 1),
+                color=color,
+                bg_color=bg_color,
                 size=(subtitle_width, None),
                 method='caption',
                 align='center'
             ).on_color(
-                color=(0, 0, 0, int(255 * 0.7)),
-                col_opacity=0.7
+                color=(0, 0, 0, int(255 * bg_opacity)),
+                col_opacity=bg_opacity
             )
 
         subtitles = SubtitlesClip(captions, create_subtitle_text_clip)
@@ -322,6 +321,11 @@ def process_video():
         auto_caption = data.get("auto_caption", False)
         resolution_str = data.get("resolution", "100%")
         use_face_tracking = data.get("use_face_tracking", False)
+        caption_font = data.get("caption_font", "Cantarell")
+        caption_size = data.get("caption_size", 30)
+        caption_color = data.get("caption_color", "#FFFFFF")
+        caption_bg_color = data.get("caption_bg_color", "#000000")
+        caption_bg_opacity = data.get("caption_bg_opacity", 0.7)
 
         # Get original dimensions
         cap = cv2.VideoCapture(video_path)
@@ -378,7 +382,16 @@ def process_video():
             captions = generate_captions(video_path)
             if captions and isinstance(captions, list):
                 captioned_path = processed_path.replace(f".{format_type}", f"_captioned.{format_type}")
-                overlay_captions(processed_path, captions, captioned_path)
+                overlay_captions(
+                    processed_path,
+                    captions,
+                    captioned_path,
+                    font=caption_font,
+                    fontsize=caption_size,
+                    color=caption_color,
+                    bg_color=caption_bg_color,
+                    bg_opacity=caption_bg_opacity
+                )
                 result["output_path"] = captioned_path
 
         return jsonify(result)

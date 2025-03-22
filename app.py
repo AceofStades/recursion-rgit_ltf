@@ -76,6 +76,34 @@ if uploaded_file:
     if features["auto_caption_available"]:
         auto_caption = st.checkbox("Enable Auto Captions")
 
+        # Caption customization options
+        st.markdown("### Caption Customization")
+        caption_font = st.selectbox("Caption Font", ["Arial", "Cantarell", "Verdana", "Times New Roman"], index=1)
+        caption_size = st.number_input("Caption Size", min_value=10, max_value=100, value=30)
+        caption_color = st.color_picker("Caption Color", "#FFFFFF")
+        caption_bg_color = st.color_picker("Caption Background Color", "#000000")
+        caption_bg_opacity = st.slider("Caption Background Opacity", 0.0, 1.0, 0.7, step=0.1)
+
+        # Caption preview
+        st.markdown("### Caption Preview")
+        st.markdown(
+            f"""
+            <div style="
+                font-family: {caption_font};
+                font-size: {caption_size}px;
+                color: {caption_color};
+                background-color: {caption_bg_color};
+                opacity: {caption_bg_opacity};
+                padding: 10px;
+                text-align: center;
+                margin: 10px 0;
+            ">
+            Sample Caption Text
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
     # Get video resolution from backend
     if "video_resolution" not in st.session_state or "original_dimensions" not in st.session_state:
         try:
@@ -147,7 +175,12 @@ if uploaded_file:
                     "aspect_ratio": aspect_ratio.lower(),
                     "auto_caption": auto_caption,
                     "use_face_tracking": use_face_tracking,
-                    "custom_mode": custom_mode
+                    "custom_mode": custom_mode,
+                    "caption_font": caption_font if features["auto_caption_available"] else "Cantarell",
+                    "caption_size": caption_size if features["auto_caption_available"] else 30,
+                    "caption_color": caption_color if features["auto_caption_available"] else "#FFFFFF",
+                    "caption_bg_color": caption_bg_color if features["auto_caption_available"] else "#000000",
+                    "caption_bg_opacity": caption_bg_opacity if features["auto_caption_available"] else 0.7
                 }
 
                 process_response = requests.post(f"{BACKEND_URL}/process_video", json=process_payload)
